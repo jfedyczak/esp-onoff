@@ -27,6 +27,8 @@ static volatile os_timer_t wifi_ready_timer;
 
 void gpio2_on(void);
 void gpio2_off(void);
+void gpio3_on(void);
+void gpio3_off(void);
 void ICACHE_FLASH_ATTR setup_client();
 void ICACHE_FLASH_ATTR wifi_ready_timer_cb(void *arg);
 void ICACHE_FLASH_ATTR setup_gpio();
@@ -79,12 +81,24 @@ static void ICACHE_FLASH_ATTR loop(os_event_t *events) {
 }
 
 void gpio2_on(void) {
-    gpio_output_set((1 << 2), 0, 0, 0);
+    GPIO_OUTPUT_SET(2, 1); // off
+//    gpio_output_set((1 << 2), 0, 0, 0);
 }
 
 void gpio2_off(void) {
-    gpio_output_set(0, (1 << 2), 0, 0);
+    GPIO_OUTPUT_SET(2, 0); // off
+//    gpio_output_set(0, (1 << 2), 0, 0);
 }
+void gpio3_on(void) {
+    GPIO_OUTPUT_SET(3, 1); // off
+//    gpio_output_set((1 << 2), 0, 0, 0);
+}
+
+void gpio3_off(void) {
+    GPIO_OUTPUT_SET(3, 0); // off
+//    gpio_output_set(0, (1 << 2), 0, 0);
+}
+
 
 static void ICACHE_FLASH_ATTR client_connected_cb(void *arg) {
     struct espconn *conn=(struct espconn *)arg;
@@ -173,7 +187,14 @@ void ICACHE_FLASH_ATTR wifi_ready_timer_cb(void *arg) {
 
 void ICACHE_FLASH_ATTR setup_gpio()  {
     gpio_init();
-    gpio_output_set(0, 0, (1 << 2), 0);
+   gpio_output_set(0, 0, (1 << 2), 0);
+
+    // PIN_FUNC_SELECT(PERIPHS_IO_MUX_U0TXD_U, FUNC_GPIO1); //use pin as GPIO1 instead of UART TXD
+    // gpio_output_set(0, 0, 1 << 1, 0); // enable pin as output
+
+    // PIN_FUNC_SELECT(PERIPHS_IO_MUX_U0RXD_U, FUNC_GPIO3); //use pin as GPIO1 instead of UART TXD
+    // gpio_output_set(0, 0, 1 << 3, 0); // enable pin as output
+
     gpio2_off();
 }
 
@@ -197,6 +218,7 @@ void setup_network() {
 }
 
 void ICACHE_FLASH_ATTR user_init() {
+    os_delay_us(10000);
     setup_gpio();
     setup_wifi();
 

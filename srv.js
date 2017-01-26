@@ -49,6 +49,8 @@ const server = net.createServer((c) => {
 	c.setTimeout(10000)
 
 	send(null, (err, data) => {
+		if (err)
+			return;
 		let params = data.split(";")
 		if (params.length != 2) {
 			c.destroy()
@@ -111,3 +113,19 @@ cmdServer.on('error', (err) => {
 cmdServer.listen(37202, () => {
 	console.log(' -- server ready')
 })
+
+process.stdin.setRawMode(true)
+process.stdin.on('data', (key) => {
+	let d = devices['0ac1d020-7cd4-4ae4-9da3-241b4398bb8c']
+	if (key == "q") process.exit()
+
+	if (key == "1") d.send(">00010111101011000000111100")
+	if (key == "!") d.send(">00010111101011000000011100")
+
+	if (key == "2") d.send(">00010111101011000000101100")
+	if (key == "@") d.send(">00010111101011000000001100")
+
+	if (key == "3") d.send(">00010111101011000000110100")
+	if (key == "#") d.send(">00010111101011000000010100")
+})
+process.stdin.resume()
