@@ -56,14 +56,14 @@ static void ICACHE_FLASH_ATTR loop(os_event_t *events) {
     if (emissionCount > 0) {
         for (i = 0; i < strlen(codeToEmit); i++) {
             if (codeToEmit[i] == '1') {
-                gpio2_on();
+                gpio3_on();
                 os_delay_us(820);
-                gpio2_off();
+                gpio3_off();
                 os_delay_us(280);
             } else {
-                gpio2_on();
+                gpio3_on();
                 os_delay_us(280);
-                gpio2_off();
+                gpio3_off();
                 os_delay_us(820);
             }
         }
@@ -90,12 +90,12 @@ void gpio2_off(void) {
 //    gpio_output_set(0, (1 << 2), 0, 0);
 }
 void gpio3_on(void) {
-    GPIO_OUTPUT_SET(3, 1); // off
+    GPIO_OUTPUT_SET(GPIO_ID_PIN(3), 1); // off
 //    gpio_output_set((1 << 2), 0, 0, 0);
 }
 
 void gpio3_off(void) {
-    GPIO_OUTPUT_SET(3, 0); // off
+    GPIO_OUTPUT_SET(GPIO_ID_PIN(3), 0); // off
 //    gpio_output_set(0, (1 << 2), 0, 0);
 }
 
@@ -187,15 +187,16 @@ void ICACHE_FLASH_ATTR wifi_ready_timer_cb(void *arg) {
 
 void ICACHE_FLASH_ATTR setup_gpio()  {
     gpio_init();
-   gpio_output_set(0, 0, (1 << 2), 0);
+   // gpio_output_set(0, 0, (1 << 2), 0);
 
     // PIN_FUNC_SELECT(PERIPHS_IO_MUX_U0TXD_U, FUNC_GPIO1); //use pin as GPIO1 instead of UART TXD
     // gpio_output_set(0, 0, 1 << 1, 0); // enable pin as output
 
-    // PIN_FUNC_SELECT(PERIPHS_IO_MUX_U0RXD_U, FUNC_GPIO3); //use pin as GPIO1 instead of UART TXD
+    PIN_FUNC_SELECT(PERIPHS_IO_MUX_U0RXD_U, FUNC_GPIO3); //use pin as GPIO1 instead of UART TXD
+    PIN_PULLUP_DIS(PERIPHS_IO_MUX_U0RXD_U);
     // gpio_output_set(0, 0, 1 << 3, 0); // enable pin as output
 
-    gpio2_off();
+    gpio3_off();
 }
 
 void ICACHE_FLASH_ATTR setup_wifi() {
