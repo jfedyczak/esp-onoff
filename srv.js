@@ -33,6 +33,7 @@ const server = net.createServer((c) => {
 	})
 	c.on('data', (data) => {
 		data = data.toString().trim()
+		console.log(data)
 		if (sendQueue.length) {
 			let cb = sendQueue.shift().callback
 			if (cb !== null) cb(null, data)
@@ -89,12 +90,18 @@ const cmdServer = net.createServer((c) => {
 			return
 		}
 		let dev = devices[guid]
+		let payload;
 		switch (dev.type) {
 			case '433TX':
-				let payload = data.shift()
 				dev.send(`>${payload}`, (err, resp) => {
 					if (err || resp != 'OK') return c.end('ERROR')
 					c.end("OK")
+				})
+				break;
+			case 'TEMP':
+				dev.send(payload, (err, resp) => {
+					if (err || resp == 'ERROR') return c.end('ERROR')
+					c.end(resp)
 				})
 				break;
 			default:
@@ -114,18 +121,13 @@ cmdServer.listen(37202, () => {
 	console.log(' -- server ready')
 })
 
-process.stdin.setRawMode(true)
-process.stdin.on('data', (key) => {
-	let d = devices['0ac1d020-7cd4-4ae4-9da3-241b4398bb8c']
-	if (key == "q") process.exit()
-
-	if (key == "1") d.send(">00010111101011000000111100")
-	if (key == "!") d.send(">00010111101011000000011100")
-
-	if (key == "2") d.send(">00010111101011000000101100")
-	if (key == "@") d.send(">00010111101011000000001100")
-
-	if (key == "3") d.send(">00010111101011000000110100")
-	if (key == "#") d.send(">00010111101011000000010100")
-})
-process.stdin.resume()
+// process.stdin.setRawMode(true)
+// process.stdin.on('data', (key) => {
+// 	let d = devices['375433ac-c371-4d15-816b-1bbbb4b4f1d4']
+// 	// let d = devices['0ac1d020-7cd4-4ae4-9da3-241b4398bb8c']
+// 	if (key == "q") process.exit()
+// 	if (key == "r") d.send("READ", (err, data) => {
+// 		console.log(data)
+// 	})
+// })
+// process.stdin.resume()
