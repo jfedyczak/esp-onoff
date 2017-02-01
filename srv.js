@@ -93,12 +93,14 @@ const cmdServer = net.createServer((c) => {
 		let payload;
 		switch (dev.type) {
 			case '433TX':
+				payload = data.shift()
 				dev.send(`>${payload}`, (err, resp) => {
 					if (err || resp != 'OK') return c.end('ERROR')
 					c.end("OK")
 				})
 				break;
 			case 'TEMP':
+				payload = data.shift()
 				dev.send(payload, (err, resp) => {
 					if (err || resp == 'ERROR') return c.end('ERROR')
 					c.end(resp)
