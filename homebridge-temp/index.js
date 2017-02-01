@@ -7,7 +7,7 @@ let Service, Characteristic
 module.exports = (homebridge) => {
 	Service = homebridge.hap.Service
 	Characteristic = homebridge.hap.Characteristic
-	homebridge.registerAccessory("hb-temp-sensor", "temp-sensor", Bulb)
+	homebridge.registerAccessory("hb-temp-sensor", "temp-sensor", TempSensor)
 }
 
 class TempSensor {
