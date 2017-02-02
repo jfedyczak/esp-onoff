@@ -1,0 +1,15 @@
+{
+	"name": "homebridge-termo-eq3",
+	"version": "0.0.1",
+	"description": "Temp sensor plugn",
+	"keywords": [
+		"homebridge-plugin"
+	],
+	"engines": {
+		"node": ">=0.12.0",
+		"homebridge": ">=0.2.0"
+	},
+	"dependencies": {
+		"eq3ble": "*"
+	}
+}
