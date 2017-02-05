@@ -1,7 +1,14 @@
 "use strict"
 
+// based on following repositories:
+//  - https://github.com/maxnowack/homebridge-eq3ble by Max Nowack
+//  - https://github.com/macnow/homebridge-platform-eq3btsmart by Maciej Nowakowski
+
 const noble = require('noble')
 const net = require('net')
+
+const DEFAULT_REFRESH_TIME = 5 * 60 * 1000
+const CHANGE_REFRESH_TIME = 90 * 1000 // minimum 90 seconds
 
 const commands = {
 	INFO: () => new Buffer('03', 'hex'),
@@ -62,12 +69,12 @@ class Thermostat {
 	constructor(device, config = {}) {
 		this.device = device
 		this.refreshing = false
+		this.nextAutoRefresh = DEFAULT_REFRESH_TIME
+		this.refreshTimer = null
 		this.taskQueue = []
 		this.commandInProgress = false
 		this.refreshing = false
-		this.config = config
-		this.config.offset = ('offset' in this.config ? this.config.offset : 0)
-		this.config.lock = ('lock' in this.config ? this.config.lock : false)
+		this.config = null
 		this.state = {
 			lowBattery: false,
 			valvePosition: 0,
@@ -90,20 +97,47 @@ class Thermostat {
 		})
 		this.device.on('handleNotify', (handle, value) => {
 			let task = this.taskQueue.shift()
+			// console.log(` -- response: ${value.toString('hex')}`)
+			this.parseData(value)
 			this.device.disconnect((err) => {
 				task.callback(null, value)
 				this.commandInProgress = false
 				this.executeNextTask()
 			})
 		})
-		this.setDate()
-		this.setOffset(this.config.offset)
-		this.setLock(this.config.lock)
-		this.setManualMode()
-		this.refreshData()
+		this.resetConfig(config)
 	}
-	addTask(command, callback) {;
+	resetConfig(config) {
+		if (this.config === null) {
+			console.log(' -- setting config')
+			console.log(config)
+			this.config = config
+			this.config.offset = ('offset' in this.config ? this.config.offset : 0)
+			this.config.lock = ('lock' in this.config ? this.config.lock : false)
+			this.setDate()
+			this.setOffset(this.config.offset)
+			this.setLock(this.config.lock)
+			this.setManualMode()
+			this.refreshData()
+		} else {
+			if (('offset' in config) && config.offset != this.config.offset) {
+				this.config.offset = config.offset
+				this.setOffset(this.config.offset)
+			}
+			if (('lock' in config) && config.lock != this.config.lock) {
+				this.config.lock = config.lock
+				this.setLock(this.config.lock)
+			}
+		}
+	}
+	addTask(type, command, callback) {
+		// cancel all redundant tasks
+		console.log(type)
+		console.log(this.taskQueue.length)
+		this.taskQueue = this.taskQueue.filter((t, i) => (i == 0) || (t.type != type))
+		console.log(this.taskQueue.length)
 		this.taskQueue.push({
+			type: type,
 			command: command,
 			callback: callback
 		})
@@ -117,14 +151,22 @@ class Thermostat {
 	}
 	refreshData() {
 		if (this.refreshing)
-			return;
+			return
 		this.refreshing = true
-		this.addTask(commands.INFO(), (err, value) => {
+		this.addTask('INFO', commands.INFO(), (err, value) => {
 			this.refreshing = false
 			if (err) {
 				setTimeout(() => { this.refresshData() }, 5000)
 			} else {
-				this.parseData(value)
+				// clear any pending refresh timers
+				if (this.refreshTimer !== null) {
+					clearTimeout(this.refreshTimer)
+				}
+				// set timer for next readout
+				this.refreshTimer = setTimeout(() => {
+					this.refreshData()
+				}, this.nextAutoRefresh)
+				this.nextAutoRefresh = DEFAULT_REFRESH_TIME
 			}
 		})
 	}
@@ -145,45 +187,50 @@ class Thermostat {
 	getState() {
 		return JSON.parse(JSON.stringify(this.state))
 	}
-	setManualMode() {
-		this.addTask(commands.MODE_MANUAL(), (err, value) => {
+	setManualMode(callback = null) {
+		this.addTask('MODE', commands.MODE_MANUAL(), (err, value) => {
 			console.log(` -- [${this.device.address}] manual mode set`)
-			this.refreshData()
+			if (callback !== null) callback(err)
 		})
 	}
-	setAutoMode() {
-		this.addTask(commands.MODE_AUTO(), (err, value) => {
+	setAutoMode(callback = null) {
+		this.addTask('MODE', commands.MODE_AUTO(), (err, value) => {
 			console.log(` -- [${this.device.address}] auto mode set`)
-			this.refreshData()
+			if (callback !== null) callback(err)
 		})
 	}
-	setModeDay() {
-		this.addTask(commands.MODE_DAY(), (err, value) => {
+	setModeDay(callback = null) {
+		this.addTask('DAYNIGHT', commands.MODE_DAY(), (err, value) => {
 			console.log(` -- [${this.device.address}] day mode set`)
+			if (callback !== null) callback(err)
 		})
 	}
-	setDate() {
-		this.addTask(commands.SET_TIME(new Date()), (err) => {
+	setDate(callback = null) {
+		this.addTask('DATE', commands.SET_TIME(new Date()), (err) => {
 			console.log(` -- [${this.device.address}] date set`)
+			if (callback !== null) callback(err)
 		})
 	}
-	setOffset(offset) {
-		this.addTask(commands.OFFSET(offset), (err) => {
+	setOffset(offset, callback = null) {
+		this.addTask('OFFSET', commands.OFFSET(offset), (err) => {
 			console.log(` -- [${this.device.address}] offset set to ${offset}`)
+			if (callback !== null) callback(err)
 		})
 	}
-	setLock(lock) {``
-		this.addTask(lock ? commands.LOCK_ON() : commands.LOCK_OFF(), (err) => {
+	setLock(lock, callback = null) {
+		this.addTask('LOCK', lock ? commands.LOCK_ON() : commands.LOCK_OFF(), (err) => {
 			console.log(` -- [${this.device.address}] lock set to ${lock}`)
+			if (callback !== null) callback(err)
 		})
 	}
-	setTemperature(temp) {
-		this.addTask(commands.TEMPERATURE(temp), (err, value) => {
+	setTemperature(temp, callback = null) {
+		// dirty hack
+		this.state.targetTemperature = temp
+		this.addTask('TEMP', commands.TEMPERATURE(temp), (err, value) => {
 			console.log(` -- [${this.device.address}] temperature set to ${temp}`)
+			this.nextAutoRefresh = CHANGE_REFRESH_TIME
 			this.refreshData()
-			setTimeout(() => {
-				this.refreshData()
-			}, 90 * 1000)
+			if (callback !== null) callback(err)
 		})
 	}
 }
@@ -198,10 +245,11 @@ let searching = false
 let nobleReady = false
 
 const searchForDevice = (address, config = {}) => {
-	if (address in wantedDevices)
-		delete wantedDevices[address]
-	if (address in devices)
-		delete devices[address]
+	if (address in devices) {
+		if (JSON.stringify(config) != '{}')
+			devices[address].resetConfig(config)
+		return
+	}
 	wantedDevices[address] = config
 	if (!searching && nobleReady) {
 		searching = true
@@ -258,6 +306,7 @@ const cmdServer = net.createServer((c) => {
 			case 'STATUS': // get device status
 				if (!('address' in data))
 					return c.end(JSON.stringify({error: 'no address'}))
+				searchForDevice(data.address) // just in case
 				if (!(data.address in devices))
 					return c.end(JSON.stringify({error: 'no device'}))
 				let status = devices[data.address].getState()
@@ -266,10 +315,13 @@ const cmdServer = net.createServer((c) => {
 			case 'TEMP': // set temperature
 				if (!('address' in data))
 					return c.end(JSON.stringify({error: 'no address'}))
+				searchForDevice(data.address) // just in case
 				if (!('temp' in data))
 					return c.end(JSON.stringify({error: 'no address'}))
 				if (!(data.address in devices))
 					return c.end(JSON.stringify({error: 'no device'}))
+				if (data.temp < 4.5) data.temp = 4.5
+				else if (data.temp > 30) data.temp = 30
 				devices[data.address].setTemperature(data.temp)
 				return c.end(JSON.stringify({ok: true}))
 			default:
