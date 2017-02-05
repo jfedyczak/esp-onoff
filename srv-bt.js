@@ -156,7 +156,7 @@ class Thermostat {
 		this.addTask('INFO', commands.INFO(), (err, value) => {
 			this.refreshing = false
 			if (err) {
-				setTimeout(() => { this.refresshData() }, 5000)
+				setTimeout(() => { this.refreshData() }, 5000)
 			} else {
 				// clear any pending refresh timers
 				if (this.refreshTimer !== null) {
