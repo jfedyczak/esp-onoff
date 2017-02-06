@@ -22,7 +22,9 @@ const commands = {
 	TEMPERATURE: temperature => new Buffer(`41${temperature <= 7.5 ? '0' : ''}${(2 * temperature).toString(16)}`, 'hex'),
 	OFFSET: offset => {
 		let code = 2 * offset + 7
-		code = `13${code < 16 ? '0' : ''}${code.toString(16)}`
+		code = code.toString(16)
+		while (code.length < 2) code = '0' + code
+		code = `13${code}`
 		return new Buffer(code, 'hex')
 	},
 	MODE_DAY: () => new Buffer('43', 'hex'),
@@ -39,11 +41,11 @@ const commands = {
 	},
 	SET_TIME: (date) => {
 		const prefix = '03'
-		let year = date.getFullYear().toString(16)
-		while (year.length < 4) year = '0' + year
+		let year = (date.getFullYear() - 2000).toString(16)
+		while (year.length < 2) year = '0' + year
 		let month = (date.getMonth() + 1).toString(16)
 		while (month.length < 2) month = '0' + month
-		let day = date.getDay().toString(16)
+		let day = date.getDate().toString(16)
 		while (day.length < 2) day = '0' + day
 		let hour = date.getHours().toString(16)
 		while (hour.length < 2) hour = '0' + hour
@@ -51,6 +53,7 @@ const commands = {
 		while (minute.length < 2) minute = '0' + minute
 		let second = date.getSeconds().toString(16)
 		while (second.length < 2) second = '0' + second
+		// console.log(prefix + year + month + day + hour + minute + second);
 		return new Buffer(prefix + year + month + day + hour + minute + second, 'hex')
 	},
 }
@@ -66,51 +69,65 @@ const statuses = {
 }
 
 class Thermostat {
-	constructor(device, config = {}) {
-		this.device = device
+	constructor(config = {}) {
+		this.device = null
+		this.config = config
+		this.deviceInitialized = false
+		this.failSafeTimer = null
+		this.lastReadout = +new Date()
+		this.state = {
+			lowBattery: false,
+			valvePosition: 0,
+			targetTemperature: 10
+		}
+	}
+	active() { return +new Date() - this.lastReadout < 10 * 60 * 1000}
+	attachDevice(device) {
 		this.refreshing = false
 		this.nextAutoRefresh = DEFAULT_REFRESH_TIME
 		this.refreshTimer = null
 		this.taskQueue = []
-		this.commandInProgress = false
-		this.refreshing = false
-		this.config = null
-		this.state = {
-			lowBattery: false,
-			valvePosition: 0,
-			targetTemperature: 19
-		}
-
+		this.currentTask = null
+		this.device = device
+		console.log(` -- [${this.device.address}] attached`)
 		this.device.on('connect', () => {
-			this.commandInProgress = true
-			this.device.writeHandle(0x0411, this.taskQueue[0].command, false, (error) => {
+			// console.log(` -- [${this.device.address}] connected ${this.currentTask.command.toString('hex')}`)
+			this.device.writeHandle(0x0411, this.currentTask.command, false, (error) => {
+				// console.log(` -- [${this.device.address}] error: ${error}`)
 				if (error) {
-					console.log(` -- [${this.device.address}] comm error: ${error}`)
-					let task = this.taskQueue.shift()
+					// console.log(` -- [${this.device.address}] comm error: ${error}`)
+					// let task = this.taskQueue.shift()
 					this.device.disconnect((err) => {
-						task.callback(error)
-						this.commandInProgress = false
-						this.executeNextTask()
+						// console.log(` -- [${this.device.address}] disconnect  ${this.currentTask.command.toString('hex')}, writeHandle error err ${err}`)
+						this.finishTask(error)
 					})
 				}
 			})
 		})
 		this.device.on('handleNotify', (handle, value) => {
-			let task = this.taskQueue.shift()
+			// console.log(` -- [${this.device.address}] handle notify  ${value.toString('hex')}`)
+			// let task = this.taskQueue.shift()
 			// console.log(` -- response: ${value.toString('hex')}`)
 			this.parseData(value)
 			this.device.disconnect((err) => {
-				task.callback(null, value)
-				this.commandInProgress = false
-				this.executeNextTask()
+				// console.log(` -- [${this.device.address}] disconnect  ${this.currentTask.command.toString('hex')}, err ${err}`)
+				this.finishTask(null, value)
 			})
 		})
-		this.resetConfig(config)
+		this.resetConfig(this.config)
 	}
+	finishTask(e, v) {
+		if (this.failSafeTimer !== null) clearTimeout(this.failSafeTimer)
+		this.failSafeTimer = null
+		this.currentTask.callback(e, v)
+		this.currentTask = null
+		this.executeNextTask()
+	}
+	deviceReady() { return this.device !== null }
 	resetConfig(config) {
-		if (this.config === null) {
+		if (!this.deviceInitialized) {
+			this.deviceInitialized = true
 			console.log(' -- setting config')
-			console.log(config)
 			this.config = config
 			this.config.offset = ('offset' in this.config ? this.config.offset : 0)
 			this.config.lock = ('lock' in this.config ? this.config.lock : false)
@@ -132,20 +149,30 @@ class Thermostat {
 	}
 	addTask(type, command, callback) {
 		// cancel all redundant tasks
-		console.log(type)
-		console.log(this.taskQueue.length)
-		this.taskQueue = this.taskQueue.filter((t, i) => (i == 0) || (t.type != type))
-		console.log(this.taskQueue.length)
+		if (this.device === null) return
+		// console.log(type)
+		this.taskQueue = this.taskQueue.filter((t) => t.type != type)
+		// console.log(this.taskQueue.length)
 		this.taskQueue.push({
 			type: type,
 			command: command,
 			callback: callback
 		})
-		if (this.taskQueue.length === 1)
+		if (this.currentTask === null && this.device !== null)
 			this.executeNextTask()
 	}
 	executeNextTask() {
-		if (this.taskQueue.length && !this.commandInProgress) {
+		console.log(` -- [${this.device.address}] tklen: ${this.taskQueue.length}, ct: ${this.currentTask}`)
+		if (this.taskQueue.length && this.currentTask === null) {
+			this.currentTask = this.taskQueue.shift()
+			this.failSafeTimer = setTimeout(() => {
+				console.log(` -- [${this.device.address}] failsafe timer r tklen: ${this.taskQueue.length}, ct: ${this.currentTask}`)
+				this.failSafeTimer = null
+				if (this.currentTask !== null)
+					this.taskQueue.unshift(this.currentTask)
+				this.currentTask = null
+				this.executeNextTask()
+			}, 7000)
 			this.device.connect()
 		}
 	}
@@ -182,6 +209,7 @@ class Thermostat {
 			targetTemperature: info[5] / 2
 		}
 		this.state = state
+		this.lastReadout = +new Date()
 		console.log(` -- [${this.device.address}] ${JSON.stringify(state)}`)
 	}
 	getState() {
@@ -238,47 +266,46 @@ class Thermostat {
 // connected devices
 let devices = {}
 
-// wanted devices
-let wantedDevices = {}
-
 let searching = false
 let nobleReady = false
+
+const allDevicesFound = () => Object.keys(devices).every((a) => devices[a].deviceReady())
 
 const searchForDevice = (address, config = {}) => {
 	if (address in devices) {
 		if (JSON.stringify(config) != '{}')
 			devices[address].resetConfig(config)
-		return
+	} else {
+		devices[address] = new Thermostat(config)
 	}
-	wantedDevices[address] = config
-	if (!searching && nobleReady) {
+	if (!searching && nobleReady && !allDevicesFound()) {
 		searching = true
-		noble.startScanning()
+		noble.startScanning([], true)
 	}
-}
-
-const addDevice = (device, config = {}) => {
-	devices[device.address] = new Thermostat(device, config)
 }
 
 noble.on('stateChange', (state) => {
 	if (state === 'poweredOn') {
 		nobleReady = true
 		console.log(' -- noble powered on')
-		if (Object.keys(devices).length < Object.keys(wantedDevices).length) {
+		if (Object.keys(devices).length) {
 			searching = true
-			noble.startScanning()
+			noble.startScanning([], true)
 		}
 	} else {
 		console.log(` -- unsupported state: ${state}`)
 	}
 })
 
+noble.on('warning', (warning) => {
+	console.log(' -- noble warning: ' + warning)
+})
+
 noble.on('discover', function(device) {
-	if (device.advertisement.localName === 'CC-RT-BLE' && (device.address in wantedDevices)) {
+	if ((device.advertisement.localName === 'CC-RT-BLE') && (device.address in devices) && (!devices[device.address].deviceReady())) {
 		console.log(` -- found thermostat at ${device.address}`)
-		addDevice(device, wantedDevices[device.address])
-		if (Object.keys(devices).length === Object.keys(wantedDevices).length) {
+		devices[device.address].attachDevice(device)
+		if (allDevicesFound()) {
 			console.log(' -- found all')
 			noble.stopScanning()
 			searching = false
@@ -309,6 +336,8 @@ const cmdServer = net.createServer((c) => {
 				searchForDevice(data.address) // just in case
 				if (!(data.address in devices))
 					return c.end(JSON.stringify({error: 'no device'}))
+				if (!devices[data.address].active())
+					return c.end(JSON.stringify({error: 'stale'}))
 				let status = devices[data.address].getState()
 				status.ok = true
 				return c.end(JSON.stringify(status))
