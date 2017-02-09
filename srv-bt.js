@@ -92,6 +92,7 @@ class Thermostat {
 		console.log(` -- [${this.device.address}] attached`)
 		this.device.on('connect', () => {
 			// console.log(` -- [${this.device.address}] connected ${this.currentTask.command.toString('hex')}`)
+			if (this.currentTask === null) return
 			this.device.writeHandle(0x0411, this.currentTask.command, false, (error) => {
 				// console.log(` -- [${this.device.address}] error: ${error}`)
 				if (error) {
