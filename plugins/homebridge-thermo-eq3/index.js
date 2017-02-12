@@ -144,9 +144,10 @@ class EQ3Thermo {
 		let infoService = new Service.AccessoryInformation()
 		
 		infoService
+			.setCharacteristic(Characteristic.Name, this.name)
 			.setCharacteristic(Characteristic.Manufacturer, 'eq-3')
 			.setCharacteristic(Characteristic.Model, 'CC-RT-BLE')
-			// .setCharacteristic(Characteristic.SerialNumver, this.address)
+			.setCharacteristic(Characteristic.SerialNumber, this.address)
 
 		thermoService
 			.getCharacteristic(Characteristic.CurrentHeatingCoolingState)
@@ -160,19 +161,25 @@ class EQ3Thermo {
 		thermoService
 			.getCharacteristic(Characteristic.CurrentTemperature)
 			.on('get', this.getCurrentTemperature.bind(this))
+			.setProps({
+				format: Characteristic.Formats.FLOAT,
+				minStep: 0.1
+			})
 
 		thermoService
 			.getCharacteristic(Characteristic.TargetTemperature)
 			.on('set', this.setTargetTemperature.bind(this))
 			.on('get', this.getTargetTemperature.bind(this))
 			.setProps({
+				format: Characteristic.Formats.FLOAT,
 				minValue: 4.5,
-				maxValue: 30
+				maxValue: 30,
+				minStep: 0.5
 			})
 		
-		// thermoService
-		// 	.getCharacteristic(Characteristic.StatusLowBattery)
-		// 	.on('get', this.getLowBattery.bind(this))
+		thermoService
+			.addCharacteristic(new Characteristic.StatusLowBattery())
+			.on('get', this.getLowBattery.bind(this))
 		
 		thermoService
 			.getCharacteristic(Characteristic.TemperatureDisplayUnits)
