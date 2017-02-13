@@ -5,13 +5,11 @@
 #include "user_interface.h"
 #include "espconn.h"
 #include "mem.h"
-#include "ds18b20.h"
-#include "stdlib.h"
+#include "bme280.h"
 
 // change GUID for every programmed device:
-// #define DEVICE_GUID "375433ac-c371-4d15-816b-1bbbb4b4f1d4"
-#define DEVICE_GUID "b3350018-4791-46f2-8734-e2de4b50231d"
-#define DEVICE_TYPE "TEMP"
+#define DEVICE_GUID "97c8b991-4c85-4a90-8cfc-e3cfa4a732f1"
+#define DEVICE_TYPE "BME280"
 
 #include "config.h"
 
@@ -23,10 +21,20 @@
 // #define DEVICE_WIFI_SSID "yourssid"
 // #define DEVICE_WIFI_PASSWORD "yourpass"
 
+// #undef DEVICE_TARGET_IP
+// #define DEVICE_TARGET_IP "10.0.1.8"
+#undef DEVICE_TARGET_PORT
+#define DEVICE_TARGET_PORT 38000
+
 #define DEVICE_ID_STRING DEVICE_TYPE ";" DEVICE_GUID "\n"
+
 
 static volatile os_timer_t some_timer;
 static volatile os_timer_t wifi_ready_timer;
+uint8_t bme_ok;
+
+sint32 temperature;
+uint32 pressure, humidity;
 
 void ICACHE_FLASH_ATTR setup_client();
 void ICACHE_FLASH_ATTR wifi_ready_timer_cb(void *arg);
@@ -34,6 +42,7 @@ void ICACHE_FLASH_ATTR setup_gpio();
 void ICACHE_FLASH_ATTR setup_wifi();
 void ICACHE_FLASH_ATTR setup_client();
 void ICACHE_FLASH_ATTR setup_network();
+void ICACHE_FLASH_ATTR go_down();
 static void ICACHE_FLASH_ATTR client_connected_cb(void *arg);
 static void ICACHE_FLASH_ATTR client_sent_cb(void *arg);
 static void ICACHE_FLASH_ATTR client_recv_cb(void *arg, char *data, unsigned short len);
@@ -45,7 +54,6 @@ static void ICACHE_FLASH_ATTR client_disconnected_cb(void *arg);
 os_event_t user_procTaskQueue[user_procTaskQueueLen];
 
 LOCAL struct espconn *pCon = NULL;
-LOCAL struct sensor_reading *tempRead = NULL;
 
 static void ICACHE_FLASH_ATTR loop(os_event_t *events) {
 
@@ -54,7 +62,7 @@ static void ICACHE_FLASH_ATTR loop(os_event_t *events) {
     system_os_post(user_procTaskPrio, 0, 0 );
 }
 
-char* itoa(int i, char b[]){
+char* ICACHE_FLASH_ATTR itoa(int i, char b[]){
     char const digit[] = "0123456789";
     char* p = b;
     if(i<0){
@@ -78,42 +86,56 @@ char* itoa(int i, char b[]){
 static void ICACHE_FLASH_ATTR client_connected_cb(void *arg) {
     struct espconn *conn=(struct espconn *)arg;
 
-    char *data = DEVICE_ID_STRING;
-    sint8 d = espconn_sent(conn, data, strlen(data));
+    if (!bme_ok) {
+        char *data = "ERROR\n";
+        espconn_sent(conn, data, strlen(data));
+        return;
+    }
+
+    BME280_ReadAll(&temperature, &pressure, &humidity);
+
+    char temp[30];
+    char *b;
+    int tread;
+
+    b = temp;
+
+    tread = temperature / 100;
+    b += strlen(itoa(tread, b));
+    tread = temperature % 100;
+    *b++ = '.';
+    if (tread < 10) *b++ = '0';
+    b += strlen(itoa(tread, b));
+    *b++ = ';';
+
+    tread = (pressure >> 8) / 100;
+    b += strlen(itoa(tread, b));
+    tread = (pressure >> 8) % 100;
+    *b++ = '.';
+    if (tread < 10) *b++ = '0';
+    b += strlen(itoa(tread, b));
+    *b++ = ';';
+
+    tread = humidity >> 10;
+    b += strlen(itoa(tread, b));
+    tread = ((humidity & 0x000003FF) * 100) >> 10;
+    *b++ = '.';
+    if (tread < 10) *b++ = '0';
+    b += strlen(itoa(tread, b));
+
+    *b++ = '\n';
+    *b++ = '\0';
+
+
+    espconn_sent(conn, temp, strlen(temp));
 }
 
 static void ICACHE_FLASH_ATTR client_sent_cb(void *arg) {
+    struct espconn *conn=(struct espconn *)arg;
+    espconn_disconnect(conn);
 }
 
 static void ICACHE_FLASH_ATTR client_recv_cb(void *arg, char *data, unsigned short len) {
-    struct espconn *conn=(struct espconn *)arg;
-    int i;
-    if (!strcmp(data,"PING\n")) {
-        char *resp = "PONG\n";
-        espconn_sent(conn, resp, strlen(resp));
-    } else if (!strcmp(data, "READ\n")) {
-        tempRead = readDS18B20();
-        if (tempRead->success) {
-            char temp[20];
-            char *b;
-            b = temp;
-            int tread = 100 * tempRead->temperature;
-            b += strlen(itoa(tread / 100, b));
-            tread = tread % 100;
-            *b++ = '.';
-            if (tread < 10) *b++ = '0';
-            b += strlen(itoa(tread, b));
-            *b++ = '\n';
-            *b++ = '\0';
-            espconn_sent(conn, temp, strlen(temp));
-        } else {
-            char *resp = "ERROR\n";
-            espconn_sent(conn, resp, strlen(resp));
-        }
-    } else {
-        char *resp = "ERROR\n";
-        espconn_sent(conn, resp, strlen(resp));
-    }
 }
 
 static void ICACHE_FLASH_ATTR client_reconnected_cb(void *arg, sint8 err) {
@@ -121,7 +143,8 @@ static void ICACHE_FLASH_ATTR client_reconnected_cb(void *arg, sint8 err) {
 }
 
 static void ICACHE_FLASH_ATTR client_disconnected_cb(void *arg) {
-    setup_network();
+    go_down();
+    // setup_network();
 }
 
 void ICACHE_FLASH_ATTR setup_client() {
@@ -167,9 +190,8 @@ void ICACHE_FLASH_ATTR wifi_ready_timer_cb(void *arg) {
 void ICACHE_FLASH_ATTR setup_gpio()  {
     gpio_init();
 
-    setup_DS1820();
-
-    tempRead = readDS18B20();
+    i2c_master_gpio_init();
+    i2c_master_init();
 }
 
 void ICACHE_FLASH_ATTR setup_wifi() {
@@ -185,19 +207,35 @@ void ICACHE_FLASH_ATTR setup_wifi() {
     wifi_station_set_config(&stationConf);
 }
 
-void setup_network() {
+void ICACHE_FLASH_ATTR setup_network() {
     os_timer_disarm(&wifi_ready_timer);
     os_timer_setfn(&wifi_ready_timer, (os_timer_func_t *)wifi_ready_timer_cb, NULL);
     os_timer_arm(&wifi_ready_timer, 500, 0);
 }
+
+void ICACHE_FLASH_ATTR go_down() {
+    BME280_SetMode(BME280_MODE_SLEEP);
+    system_deep_sleep_set_option(2);
+    system_deep_sleep(5 * 60 * 1000 * 1000);
+}
+
+static volatile os_timer_t my_timer;
 
 void ICACHE_FLASH_ATTR user_init() {
     os_delay_us(10000);
     setup_gpio();
     setup_wifi();
 
+    uint8_t adr;
+    bme_ok = !BME280_Init(BME280_OS_T_16, BME280_OS_P_16, BME280_OS_H_16,
+					BME280_FILTER_16, BME280_MODE_NORMAL, BME280_TSB_05);
+    os_delay_us(100000);
+
     system_os_task(loop, user_procTaskPrio,user_procTaskQueue, user_procTaskQueueLen);
     system_os_post(user_procTaskPrio, 0, 0 );
+
+    os_timer_setfn(&my_timer, (os_timer_func_t *)go_down, NULL);
+    os_timer_arm(&my_timer, 5 * 1000, 0);
 
     setup_network();
 }
