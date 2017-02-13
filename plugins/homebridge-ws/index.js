@@ -18,13 +18,14 @@ class TempSensor {
 		this.log = log
 		this.readout = {
 			t: 0,
-			h: 0
+			h: 0,
+			ts: +new Date()
 		}
 		this.name = config.name
 		this.createConn()
 		this.log(`Starting temp-sensor ${this.guid}`)
 	}
-
+	active() { return +new Date() - this.readout.ts < 30 * 60 * 1000}
 	createConn() {
 		net.connect({
 			host: '127.0.0.1',
@@ -64,7 +65,7 @@ class TempSensor {
 	}
 
 	getServices() {
-		sensorTemperature = new Service.TemperatureSensor(`Temperature ${this.name}`);
+		sensorTemperature = new Service.TemperatureSensor(`${this.name} temperature`);
 		sensorTemperature
 			.getCharacteristic(Characteristic.CurrentTemperature)
 			.setProps({
@@ -74,10 +75,12 @@ class TempSensor {
 				perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
 			})
 			.on('get', (callback) => {
+				if (!this.active())
+					return callback('stale')
 				callback(null, this.readout.t)
 			})
 
-		sensorHumidity = new Service.HumiditySensor(`Humidity ${this.name}`);
+		sensorHumidity = new Service.HumiditySensor(`${this.name} humidity`);
 		sensorHumidity
 			.getCharacteristic(Characteristic.CurrentRelativeHumidity)
 			.setProps({
@@ -87,6 +90,8 @@ class TempSensor {
 				perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
 			})
 			.on('get', (callback) => {
+				if (!this.active())
+					return callback('stale')
 				callback(null, this.readout.h)
 			})
 		return [sensorTemperature, sensorHumidity]
