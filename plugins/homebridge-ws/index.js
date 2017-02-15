@@ -10,11 +10,10 @@ module.exports = (homebridge) => {
 	homebridge.registerAccessory("hb-ws", "weather-station", TempSensor)
 }
 
-let sensorTemperature = null
-let sensorHumidity = null
-
 class TempSensor {
 	constructor(log, config) {
+		this.sensorTemperature = null
+		this.sensorHumidity = null
 		this.log = log
 		this.readout = {
 			t: 0,
@@ -32,8 +31,8 @@ class TempSensor {
 			port: 38001
 		}).on('data', (data) => {
 			this.readout = JSON.parse(data.toString().trim())
-			if (sensorTemperature !== null) sensorTemperature.setCharacteristic(Characteristic.CurrentTemperature, this.readout.t)
-			if (sensorHumidity !== null) sensorHumidity.setCharacteristic(Characteristic.CurrentRelativeHumidity, this.readout.h)
+			if (this.sensorTemperature !== null) this.sensorTemperature.setCharacteristic(Characteristic.CurrentTemperature, this.readout.t)
+			if (this.sensorHumidity !== null) this.sensorHumidity.setCharacteristic(Characteristic.CurrentRelativeHumidity, this.readout.h)
 		}).on('end', () => {
 			setTimeout(() => {
 				this.createConn()
@@ -65,8 +64,8 @@ class TempSensor {
 	}
 
 	getServices() {
-		sensorTemperature = new Service.TemperatureSensor(`${this.name} temperature`);
-		sensorTemperature
+		this.sensorTemperature = new Service.TemperatureSensor(`${this.name} temperature`);
+		this.sensorTemperature
 			.getCharacteristic(Characteristic.CurrentTemperature)
 			.setProps({
 				minValue: -100,
@@ -80,8 +79,8 @@ class TempSensor {
 				callback(null, this.readout.t)
 			})
 
-		sensorHumidity = new Service.HumiditySensor(`${this.name} humidity`);
-		sensorHumidity
+		this.sensorHumidity = new Service.HumiditySensor(`${this.name} humidity`);
+		this.sensorHumidity
 			.getCharacteristic(Characteristic.CurrentRelativeHumidity)
 			.setProps({
 				minValue: -100,
@@ -94,6 +93,6 @@ class TempSensor {
 					return callback('stale')
 				callback(null, this.readout.h)
 			})
-		return [sensorTemperature, sensorHumidity]
+		return [this.sensorTemperature, this.sensorHumidity]
 	}
 }
