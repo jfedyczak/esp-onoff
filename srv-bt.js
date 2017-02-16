@@ -169,8 +169,8 @@ class Thermostat {
 					// too many retries - shutting down and back to scanning
 					console.log(` -- [${this.device.address}] SNAFU`)
 					this.killSwitch = true
-					delete devices[this.address]
-					return searchForDevice(this.address)
+					delete devices[this.device.address]
+					return searchForDevice(this.device.address)
 				}
 				console.log(` -- [${this.device.address}] failsafe timer r tklen: ${this.taskQueue.length}, ct: ${this.currentTask}`)
 				this.failSafeTimer = null
