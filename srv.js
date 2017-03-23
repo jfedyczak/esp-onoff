@@ -8,13 +8,20 @@ const server = net.createServer((c) => {
 	console.log(' -- new connection');
 	let guid = false
 	let sendQueue = []
+	let writeRaw = (payload) => {
+		if (Buffer.isBuffer(payload)) {
+			c.write(payload)
+		} else {
+			c.write(`${payload}\n`)
+		}
+	}
 	let send = (payload, callback) => {
 		sendQueue.push({
 			payload: payload,
 			callback: callback
 		})
 		if (sendQueue.length == 1 && payload !== null)
-			c.write(`${payload}\n`)
+			writeRaw(payload)
 	}
 	let ping = () => {
 		send('PING', (err, data) => {
@@ -38,7 +45,7 @@ const server = net.createServer((c) => {
 			let cb = sendQueue.shift().callback
 			if (cb !== null) cb(null, data)
 			if (sendQueue.length) {
-				c.write(`${sendQueue[0].payload}\n`)
+				writeRaw(sendQueue[0].payload)
 			}
 			return
 		}
@@ -106,6 +113,25 @@ const cmdServer = net.createServer((c) => {
 					c.end(resp)
 				})
 				break;
+			case 'LEDX':
+				let cmd = data.shift()
+				switch (cmd) {
+					case 'EQ':
+						dev.send('EQ', (err, resp) => {
+							if (err || resp == 'ERROR') return c.end('ERROR')
+							c.end(resp)
+						})
+						break;
+					case 'RAW':
+						let hex = data.shift().toLowerCase()
+						hex = '3e' + hex
+						let pld = Buffer.from(hex, 'hex')
+						dev.send(pld, (err, resp) => {
+							if (err || resp == 'ERROR') return c.end('ERROR')
+							c.end(resp)
+						})
+						break;
+				}
 			default:
 				c.end('UNKNOWN DEV TYPE')
 		}
