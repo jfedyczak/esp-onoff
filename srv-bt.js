@@ -75,6 +75,8 @@ class Thermostat {
 		this.deviceInitialized = false
 		this.failSafeTimer = null
 		this.lastReadout = +new Date()
+		this.killSwitch = false
+		this.failSafeCounter = 0
 		this.state = {
 			lowBattery: false,
 			valvePosition: 0,
@@ -91,33 +93,29 @@ class Thermostat {
 		this.device = device
 		console.log(` -- [${this.device.address}] attached`)
 		this.device.on('connect', () => {
-			// console.log(` -- [${this.device.address}] connected ${this.currentTask.command.toString('hex')}`)
+			if (this.killSwitch) return
 			if (this.currentTask === null) return
 			this.device.writeHandle(0x0411, this.currentTask.command, false, (error) => {
-				// console.log(` -- [${this.device.address}] error: ${error}`)
+				if (this.killSwitch) return
 				if (error) {
-					// console.log(` -- [${this.device.address}] comm error: ${error}`)
-					// let task = this.taskQueue.shift()
 					this.device.disconnect((err) => {
-						// console.log(` -- [${this.device.address}] disconnect  ${this.currentTask.command.toString('hex')}, writeHandle error err ${err}`)
 						this.finishTask(error)
 					})
 				}
 			})
 		})
 		this.device.on('handleNotify', (handle, value) => {
-			// console.log(` -- [${this.device.address}] handle notify  ${value.toString('hex')}`)
-			// let task = this.taskQueue.shift()
-			// console.log(` -- response: ${value.toString('hex')}`)
+			if (this.killSwitch) return
 			this.parseData(value)
 			this.device.disconnect((err) => {
-				// console.log(` -- [${this.device.address}] disconnect  ${this.currentTask.command.toString('hex')}, err ${err}`)
+				if (this.killSwitch) return
 				this.finishTask(null, value)
 			})
 		})
 		this.resetConfig(this.config)
 	}
 	finishTask(e, v) {
+		this.failSafeCounter = 0
 		if (this.failSafeTimer !== null) clearTimeout(this.failSafeTimer)
 		this.failSafeTimer = null
 		this.currentTask.callback(e, v)
@@ -151,9 +149,7 @@ class Thermostat {
 	addTask(type, command, callback) {
 		// cancel all redundant tasks
 		if (this.device === null) return
-		// console.log(type)
 		this.taskQueue = this.taskQueue.filter((t) => t.type != type)
-		// console.log(this.taskQueue.length)
 		this.taskQueue.push({
 			type: type,
 			command: command,
@@ -163,21 +159,34 @@ class Thermostat {
 			this.executeNextTask()
 	}
 	executeNextTask() {
+		if (this.killSwitch) return
 		console.log(` -- [${this.device.address}] tklen: ${this.taskQueue.length}, ct: ${this.currentTask}`)
 		if (this.taskQueue.length && this.currentTask === null) {
 			this.currentTask = this.taskQueue.shift()
 			this.failSafeTimer = setTimeout(() => {
+				this.failSafeCounter += 1
+				if (this.failSafeCounter > 10) {
+					// too many retries - shutting down and going nuclear
+					console.log(` -- [${this.device.address}] SNAFU`)
+					this.killSwitch = true
+					// delete devices[this.device.address]
+					// return searchForDevice(this.device.address)
+					setTimeout(() => {
+						process.exit(1)
+					}, 2000)
+				}
 				console.log(` -- [${this.device.address}] failsafe timer r tklen: ${this.taskQueue.length}, ct: ${this.currentTask}`)
 				this.failSafeTimer = null
 				if (this.currentTask !== null)
 					this.taskQueue.unshift(this.currentTask)
 				this.currentTask = null
 				this.executeNextTask()
-			}, 7000)
+			}, 8000)
 			this.device.connect()
 		}
 	}
 	refreshData() {
+		if (this.killSwitch) return
 		if (this.refreshing)
 			return
 		this.refreshing = true
@@ -266,13 +275,23 @@ class Thermostat {
 
 // connected devices
 let devices = {}
+let configCache = {}
 
 let searching = false
 let nobleReady = false
 
 const allDevicesFound = () => Object.keys(devices).every((a) => devices[a].deviceReady())
 
-const searchForDevice = (address, config = {}) => {
+const searchForDevice = (address, config = null) => {
+	if (config === null) {
+		if (address in configCache) {
+			config = configCache[address]
+		} else {
+			config = {}
+		}
+	} else {
+		configCache[address] = config
+	}
 	if (address in devices) {
 		if (JSON.stringify(config) != '{}')
 			devices[address].resetConfig(config)

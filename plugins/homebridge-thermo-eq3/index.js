@@ -17,6 +17,7 @@ class EQ3Thermo {
 			valvePosition: 0,
 			targetTemperature: 4.5
 		}
+		this.thermoService = null
 		this.temperatureDisplayUnits = Characteristic.TemperatureDisplayUnits.CELSIUS
 		this.log = log
 		this.address = config.address
@@ -29,9 +30,25 @@ class EQ3Thermo {
 			cmd: 'ADD',
 			offset: this.offset,
 			lock: this.lock
-		}, () => {})
+		}, () => {
+			this.refreshState()
+			this.refreshCurrentTemp()
+		})
 	}
-
+	refreshState() {
+		setTimeout(() => {
+			this.getStatus((err) => {
+				this.refreshState()
+			})
+		}, 15000)
+	}
+	refreshCurrentTemp() {
+		setTimeout(() => {
+			this.getCurrentTemperature((err, temp) => {
+				this.refreshState()
+			})
+		}, 15000)
+	}
 	requestData(params, callback) {
 		let ok = false
 		let response = {}
@@ -78,6 +95,8 @@ class EQ3Thermo {
 		})
 		client.on('end', () => {
 			if (ok) {
+				if (this.thermoService !== null)
+					this.thermoService.setCharacteristic(Characteristic.CurrentTemperature, this.temperature)
 				callback(null, this.temperature)
 			} else {
 				callback('ERROR')
@@ -91,26 +110,38 @@ class EQ3Thermo {
 		}, (err, response) => {
 			if (err) return callback(err)
 			this.state = response
+			if (this.thermoService !== null) {
+				this.thermoService.setCharacteristic(Characteristic.CurrentHeatingCoolingState, this.parseCurrentHCState())
+				this.thermoService.getCharacteristic(Characteristic.TargetHeatingCoolingState).setValue(this.parseTargetHCState(), undefined, 'setOnly')
+				this.thermoService.getCharacteristic(Characteristic.TargetTemperature).setValue(this.state.targetTemperature, undefined, 'setOnly')
+			}
 			callback(null, this.state)
 		})
+	}
+	parseCurrentHCState() {
+		if (this.state.valvePosition > 0)
+			return Characteristic.CurrentHeatingCoolingState.HEAT
+		return Characteristic.CurrentHeatingCoolingState.OFF	
 	}
 	getCurrentHCState(callback) {
 		this.getStatus((err, status) => {
 			if (err) return callback(err)
-			if (status.valvePosition > 0)
-				return callback(null, Characteristic.CurrentHeatingCoolingState.HEAT)
-			return callback(null, Characteristic.CurrentHeatingCoolingState.OFF)			
+			callback(null, this.parseCurrentHCState())
 		})
+	}
+	parseTargetHCState() {
+		if (this.state.targetTemperature > 4.5)
+			return Characteristic.TargetHeatingCoolingState.HEAT
+		return Characteristic.TargetHeatingCoolingState.OFF
 	}
 	getTargetHCState(callback) {
 		this.getStatus((err, status) => {
 			if (err) return callback(err)
-			if (status.targetTemperature > 4.5)
-				return callback(null, Characteristic.TargetHeatingCoolingState.HEAT)
-			return callback(null, Characteristic.TargetHeatingCoolingState.OFF)			
+			callback(null, this.parseTargetHCState())
 		})
 	}
-	setTargetHCState(value, callback) {
+	setTargetHCState(value, callback, context) {
+		if (context === 'setOnly') return callback(null)
 		if (value == Characteristic.TargetHeatingCoolingState.OFF)
 			return this.setTargetTemperature(4.5, callback)
 		callback(null)
@@ -127,11 +158,15 @@ class EQ3Thermo {
 			return callback(null, status.targetTemperature)
 		})
 	}
-	setTargetTemperature(temp, callback) {
+	setTargetTemperature(temp, callback, context) {
+		if (context === 'setOnly') return callback(null)
 		this.requestData({
 			cmd: 'TEMP',
 			temp: temp
-		}, callback)
+		}, (err) => {
+			if (err) return callback(err)
+			callback(null)
+		})
 	}
 	getLowBattery(callback) {
 		this.getStatus((err, status) => {
@@ -140,7 +175,7 @@ class EQ3Thermo {
 		})
 	}
 	getServices() {
-		let thermoService = new Service.Thermostat(this.name)
+		this.thermoService = new Service.Thermostat(this.name)
 		let infoService = new Service.AccessoryInformation()
 		
 		infoService
@@ -149,24 +184,31 @@ class EQ3Thermo {
 			.setCharacteristic(Characteristic.Model, 'CC-RT-BLE')
 			.setCharacteristic(Characteristic.SerialNumber, this.address)
 
-		thermoService
+		this.thermoService
 			.getCharacteristic(Characteristic.CurrentHeatingCoolingState)
 			.on('get', this.getCurrentHCState.bind(this))
+			.setProps({
+				perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
+			})
 		
-		thermoService
+		this.thermoService
 			.getCharacteristic(Characteristic.TargetHeatingCoolingState)
 			.on('set', this.setTargetHCState.bind(this))
 			.on('get', this.getTargetHCState.bind(this))
+			.setProps({
+				perms: [Characteristic.Perms.READ, Characteristic.Perms.WRITE,  Characteristic.Perms.NOTIFY]
+			})
 
-		thermoService
+		this.thermoService
 			.getCharacteristic(Characteristic.CurrentTemperature)
 			.on('get', this.getCurrentTemperature.bind(this))
 			.setProps({
 				format: Characteristic.Formats.FLOAT,
-				minStep: 0.1
+				minStep: 0.1,
+				perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
 			})
 
-		thermoService
+		this.thermoService
 			.getCharacteristic(Characteristic.TargetTemperature)
 			.on('set', this.setTargetTemperature.bind(this))
 			.on('get', this.getTargetTemperature.bind(this))
@@ -174,20 +216,21 @@ class EQ3Thermo {
 				format: Characteristic.Formats.FLOAT,
 				minValue: 4.5,
 				maxValue: 30,
-				minStep: 0.5
+				minStep: 0.5,
+				perms: [Characteristic.Perms.READ, Characteristic.Perms.WRITE,  Characteristic.Perms.NOTIFY]
 			})
 		
-		thermoService
+		this.thermoService
 			.addCharacteristic(new Characteristic.StatusLowBattery())
 			.on('get', this.getLowBattery.bind(this))
 		
-		thermoService
+		this.thermoService
 			.getCharacteristic(Characteristic.TemperatureDisplayUnits)
 			.on('get', cb => cb(null, this.temperatureDisplayUnits))
 			.on('set', (v, cb) => {
 				this.temperatureDisplayUnits = v
 				cb(null)
 			})
-		return [infoService, thermoService]
+		return [infoService, this.thermoService]
 	}
 }
