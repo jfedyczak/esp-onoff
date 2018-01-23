@@ -169,12 +169,10 @@ class Thermostat {
 				if (this.failSafeCounter > 10) {
 					// too many retries - shutting down and going nuclear
 					console.log(` -- [${this.device.address}] SNAFU`)
-					this.killSwitch = true
+					this.kill()
+					return
 					// delete devices[this.device.address]
 					// return searchForDevice(this.device.address)
-					setTimeout(() => {
-						process.exit(1)
-					}, 2000)
 				}
 				// console.log(` -- [${this.device.address}] failsafe timer r tklen: ${this.taskQueue.length}, ct: ${this.currentTask}`)
 				this.failSafeTimer = null
@@ -188,6 +186,7 @@ class Thermostat {
 	}
 	kill() {
 		this.killSwitch = true
+		this.lastReadout = 0
 		if (this.device !== null)
 			this.device.disconnect()
 	}
