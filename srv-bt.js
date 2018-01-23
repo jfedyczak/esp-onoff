@@ -74,7 +74,8 @@ class Thermostat {
 		this.config = config
 		this.deviceInitialized = false
 		this.failSafeTimer = null
-		this.lastReadout = +new Date()
+		this.lastReadout = 0
+		// this.lastReadout = +new Date()
 		this.killSwitch = false
 		this.failSafeCounter = 0
 		this.state = {
@@ -130,9 +131,9 @@ class Thermostat {
 			this.config = config
 			this.config.offset = ('offset' in this.config ? this.config.offset : 0)
 			this.config.lock = ('lock' in this.config ? this.config.lock : false)
-			this.setDate()
+			// this.setDate()
 			this.setOffset(this.config.offset)
-			this.setLock(this.config.lock)
+			// this.setLock(this.config.lock)
 			this.setManualMode()
 			this.refreshData()
 		} else {
@@ -160,7 +161,7 @@ class Thermostat {
 	}
 	executeNextTask() {
 		if (this.killSwitch) return
-		console.log(` -- [${this.device.address}] tklen: ${this.taskQueue.length}, ct: ${this.currentTask}`)
+		// console.log(` -- [${this.device.address}] tklen: ${this.taskQueue.length}, ct: ${this.currentTask}`)
 		if (this.taskQueue.length && this.currentTask === null) {
 			this.currentTask = this.taskQueue.shift()
 			this.failSafeTimer = setTimeout(() => {
@@ -175,7 +176,7 @@ class Thermostat {
 						process.exit(1)
 					}, 2000)
 				}
-				console.log(` -- [${this.device.address}] failsafe timer r tklen: ${this.taskQueue.length}, ct: ${this.currentTask}`)
+				// console.log(` -- [${this.device.address}] failsafe timer r tklen: ${this.taskQueue.length}, ct: ${this.currentTask}`)
 				this.failSafeTimer = null
 				if (this.currentTask !== null)
 					this.taskQueue.unshift(this.currentTask)
@@ -184,6 +185,11 @@ class Thermostat {
 			}, 8000)
 			this.device.connect()
 		}
+	}
+	kill() {
+		this.killSwitch = true
+		if (this.device !== null)
+			this.device.disconnect()
 	}
 	refreshData() {
 		if (this.killSwitch) return
@@ -226,6 +232,10 @@ class Thermostat {
 		return JSON.parse(JSON.stringify(this.state))
 	}
 	setManualMode(callback = null) {
+		if (this.state.manual === true) {
+			if (callback !== null) callback(null)
+			return
+		}
 		this.addTask('MODE', commands.MODE_MANUAL(), (err, value) => {
 			console.log(` -- [${this.device.address}] manual mode set`)
 			if (callback !== null) callback(err)
@@ -282,6 +292,26 @@ let nobleReady = false
 
 const allDevicesFound = () => Object.keys(devices).every((a) => devices[a].deviceReady())
 
+let lastRestart = 0
+const restartScanning = () => {
+	if (+new Date() - lastRestart < 30 * 1000) return false
+	if (searching) {
+		noble.stopScanning()
+	}
+	console.log(' -- restarting scan')
+	lastRestart = +new Date()
+	noble.startScanning([], true)
+	searching = true
+	return true
+}
+
+const stopScanning = () => {
+	if (searching) {
+		noble.stopScanning()
+		searching = false
+	}
+}
+
 const searchForDevice = (address, config = null) => {
 	if (config === null) {
 		if (address in configCache) {
@@ -293,14 +323,21 @@ const searchForDevice = (address, config = null) => {
 		configCache[address] = config
 	}
 	if (address in devices) {
-		if (JSON.stringify(config) != '{}')
-			devices[address].resetConfig(config)
+		if (!devices[address].active()) {
+			if (restartScanning()) {
+				console.log(` -- [${address}] dodaje na nowo`)
+				devices[address].kill()
+				devices[address] = new Thermostat(config)
+			}
+		} else {
+			if (JSON.stringify(config) != '{}')
+				devices[address].resetConfig(config)
+		}
 	} else {
 		devices[address] = new Thermostat(config)
 	}
 	if (!searching && nobleReady && !allDevicesFound()) {
-		searching = true
-		noble.startScanning([], true)
+		restartScanning()
 	}
 }
 
@@ -309,8 +346,7 @@ noble.on('stateChange', (state) => {
 		nobleReady = true
 		console.log(' -- noble powered on')
 		if (Object.keys(devices).length) {
-			searching = true
-			noble.startScanning([], true)
+			restartScanning()
 		}
 	} else {
 		console.log(` -- unsupported state: ${state}`)
@@ -327,8 +363,7 @@ noble.on('discover', function(device) {
 		devices[device.address].attachDevice(device)
 		if (allDevicesFound()) {
 			console.log(' -- found all')
-			noble.stopScanning()
-			searching = false
+			stopScanning()
 		}
 	}
 })
