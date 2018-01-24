@@ -106,7 +106,8 @@ class EQ3Thermo {
 	getStatus(callback) {
 		// TODO: cache
 		this.requestData({
-			cmd: 'STATUS'
+			cmd: 'STATUS',
+			offset: this.offset,
 		}, (err, response) => {
 			if (err) return callback(err)
 			this.state = response

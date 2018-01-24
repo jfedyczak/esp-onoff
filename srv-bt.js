@@ -141,10 +141,10 @@ class Thermostat {
 				this.config.offset = config.offset
 				this.setOffset(this.config.offset)
 			}
-			if (('lock' in config) && config.lock != this.config.lock) {
-				this.config.lock = config.lock
-				this.setLock(this.config.lock)
-			}
+			// if (('lock' in config) && config.lock != this.config.lock) {
+			// 	this.config.lock = config.lock
+			// 	this.setLock(this.config.lock)
+			// }
 		}
 	}
 	addTask(type, command, callback) {
@@ -387,7 +387,7 @@ const cmdServer = net.createServer((c) => {
 			case 'STATUS': // get device status
 				if (!('address' in data))
 					return c.end(JSON.stringify({error: 'no address'}))
-				searchForDevice(data.address) // just in case
+				searchForDevice(data.address, data) // just in case
 				if (!(data.address in devices))
 					return c.end(JSON.stringify({error: 'no device'}))
 				if (!devices[data.address].active())
